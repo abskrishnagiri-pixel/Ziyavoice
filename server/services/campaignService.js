@@ -144,7 +144,7 @@ class CampaignService {
     }
 
     /**
-     * Process campaign - make calls to all contacts
+     * Process campaign - make calls to all contacts with concurrent call limit
      */
     async processCampaign(campaignId, userId) {
         try {
@@ -176,6 +176,10 @@ class CampaignService {
             );
             const campaignSettings = settings[0] || { call_interval_seconds: 10 };
 
+            // Get concurrent calls limit (default to 2 if not set)
+            const concurrentCallsLimit = campaign.concurrent_calls || 2;
+            console.log(`🔢 Concurrent calls limit: ${concurrentCallsLimit}`);
+
             // Get pending contacts
             const [contacts] = await this.mysqlPool.execute(
                 `SELECT * FROM campaign_contacts 
@@ -185,13 +189,10 @@ class CampaignService {
             );
 
             console.log(`📋 Found ${contacts.length} contacts to call`);
-            console.log(`⏱️ Call interval: ${campaignSettings.call_interval_seconds} seconds between calls`);
+            console.log(`⏱️ Call interval: ${campaignSettings.call_interval_seconds} seconds between batches`);
 
-            // Process each contact ONE BY ONE (sequential, not parallel)
-            for (let i = 0; i < contacts.length; i++) {
-                const contact = contacts[i];
-                console.log(`\n📞 Processing contact ${i + 1}/${contacts.length}: ${contact.phone_number}`);
-
+            // Process contacts in batches based on concurrent calls limit
+            for (let i = 0; i < contacts.length; i += concurrentCallsLimit) {
                 // Check if campaign is still running
                 const campaignState = this.activeCampaigns.get(campaignId);
                 if (!campaignState || campaignState.status !== 'running') {
@@ -199,25 +200,39 @@ class CampaignService {
                     break;
                 }
 
-                // Check user balance before each call
-                const balanceCheck = await this.walletService.checkBalanceForCall(userId, 0.10);
+                // Get batch of contacts
+                const batch = contacts.slice(i, i + concurrentCallsLimit);
+                console.log(`\n📞 Processing batch ${Math.floor(i / concurrentCallsLimit) + 1}/${Math.ceil(contacts.length / concurrentCallsLimit)}: ${batch.length} concurrent calls`);
+
+                // Check user balance before batch
+                const balanceCheck = await this.walletService.checkBalanceForCall(userId, 0.10 * batch.length);
                 if (!balanceCheck.allowed) {
                     console.error(`❌ Insufficient balance, pausing campaign ${campaignId}`);
                     await this.pauseCampaign(campaignId);
                     break;
                 }
 
-                // Make the call (AWAIT ensures we wait for this to complete before moving to next)
-                console.log(`🔄 Initiating call to ${contact.phone_number}...`);
-                await this.makeCall(campaignId, contact, campaign, agentSettings);
+                // Make calls concurrently for this batch
+                const callPromises = batch.map(contact => {
+                    console.log(`🔄 Initiating call to ${contact.phone_number}...`);
+                    return this.makeCall(campaignId, contact, campaign, agentSettings)
+                        .catch(error => {
+                            console.error(`Error calling ${contact.phone_number}:`, error);
+                            return { success: false, error: error.message };
+                        });
+                });
 
-                // Wait between calls (prevents calling all numbers at once)
-                if (i < contacts.length - 1) { // Don't wait after the last call
+                // Wait for all calls in this batch to be initiated
+                await Promise.all(callPromises);
+                console.log(`✅ Batch ${Math.floor(i / concurrentCallsLimit) + 1} initiated`);
+
+                // Wait between batches (prevents calling all numbers at once)
+                if (i + concurrentCallsLimit < contacts.length) {
                     const waitTime = campaignSettings && campaignSettings.call_interval_seconds > 0
                         ? campaignSettings.call_interval_seconds
                         : 10; // Default 10 seconds
 
-                    console.log(`⏳ Waiting ${waitTime} seconds before next call...`);
+                    console.log(`⏳ Waiting ${waitTime} seconds before next batch...`);
                     await new Promise(resolve =>
                         setTimeout(resolve, waitTime * 1000)
                     );

@@ -63,9 +63,29 @@ class MediaStreamHandler {
         return session;
     }
 
-    endSession(callId) {
+    async endSession(callId) {
         const session = sessions.get(callId);
         if (session) {
+            // Execute tools marked to run after call
+            if (session.tools && session.tools.length > 0 && session.agentId) {
+                const afterCallTools = session.tools.filter(tool => tool.runAfterCall);
+                if (afterCallTools.length > 0) {
+                    console.log(`🔧 Executing ${afterCallTools.length} after-call tools...`);
+
+                    const ToolExecutionService = require('./toolExecutionService.js');
+                    const toolExecutionService = new ToolExecutionService(this.llmService, this.mysqlPool);
+
+                    // Execute after-call tools (don't await to avoid blocking)
+                    toolExecutionService.processToolsAfterCall(session, afterCallTools)
+                        .then(() => {
+                            console.log('✅ After-call tools executed successfully');
+                        })
+                        .catch(err => {
+                            console.error('❌ Error executing after-call tools:', err);
+                        });
+                }
+            }
+
             // Calculate and charge for Twilio usage
             if (session.startTime && session.userId && this.costCalculator) {
                 const endTime = new Date();
@@ -113,6 +133,12 @@ class MediaStreamHandler {
         try {
             console.log(`📞 WebSocket connection initiated from handleConnection`);
 
+            // Extract from query params as fallback (for non-Twilio or early identification)
+            const queryParams = require('url').parse(req.url, true).query;
+            let queryCallId = queryParams.callId;
+            let queryAgentId = queryParams.agentId;
+            let queryUserId = queryParams.userId;
+
             // ✅ Set up error handler FIRST before any other operations
             ws.on("error", (error) => {
                 // Ignore UTF-8 errors from binary frames (Twilio sends binary audio data)
@@ -153,16 +179,16 @@ class MediaStreamHandler {
 
                         // Extract parameters from start event
                         const streamParams = data.start?.customParameters || {};
-                        callId = streamParams.callId || data.start?.callSid;
-                        agentId = streamParams.agentId;
-                        const userId = streamParams.userId;
+                        callId = streamParams.callId || queryCallId || data.start?.callSid;
+                        agentId = streamParams.agentId || queryAgentId;
+                        const userId = streamParams.userId || queryUserId;
 
                         console.log(`📞 Call ID: ${callId}`);
                         console.log(`🤖 Agent ID: ${agentId}`);
                         console.log(`👤 User ID: ${userId}`);
 
                         if (!callId) {
-                            console.error("❌ No callId in start event");
+                            console.error("❌ No callId found in start event or query params");
                             ws.close();
                             return;
                         }

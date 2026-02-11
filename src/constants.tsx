@@ -261,16 +261,16 @@ export const OpenAIIcon = (props: React.SVGProps<SVGSVGElement>) => (
 // FIX: Add missing data exports required by AgentDetailPage
 export const AVAILABLE_MODELS = [
     // Gemini Models
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Latest Gemini model, fast and efficient', icon: GoogleIcon, provider: 'gemini' },
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Previous generation, reliable and cost-effective', icon: GoogleIcon, provider: 'gemini' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'More capable, better for complex tasks', icon: GoogleIcon, provider: 'gemini' },
+    { id: 'gemini-2.0-flash', name: 'Ziya-2.0-flash', description: 'Latest Gemini model, fast and efficient', icon: GoogleIcon, provider: 'gemini' },
+    { id: 'gemini-1.5-flash', name: 'Ziya-LLM', description: 'Previous generation, reliable and cost-effective', icon: GoogleIcon, provider: 'gemini' },
+    { id: 'gemini-1.5-pro', name: 'Salman-LLM(Highly Efficient)', description: 'More capable, better for complex tasks', icon: GoogleIcon, provider: 'gemini' },
 
-    // OpenAI Models
-    { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable OpenAI model, best quality', icon: OpenAIIcon, provider: 'openai' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and affordable, great for most tasks', icon: OpenAIIcon, provider: 'openai' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'Previous generation flagship model', icon: OpenAIIcon, provider: 'openai' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Most cost-effective OpenAI model', icon: OpenAIIcon, provider: 'openai' },
-];
+//     // OpenAI Models
+//     { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable OpenAI model, best quality', icon: OpenAIIcon, provider: 'openai' },
+//     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and affordable, great for most tasks', icon: OpenAIIcon, provider: 'openai' },
+//     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'Previous generation flagship model', icon: OpenAIIcon, provider: 'openai' },
+//     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Most cost-effective OpenAI model', icon: OpenAIIcon, provider: 'openai' },
+ ];
 
 export const AVAILABLE_LANGUAGES = [
     { id: 'ENGLISH', name: 'English' },

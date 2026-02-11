@@ -23,6 +23,8 @@ const CampaignDetailPage: React.FC = () => {
   const [totalRecords, setTotalRecords] = useState(0);
   const [availablePhoneNumbers, setAvailablePhoneNumbers] = useState<PhoneNumber[]>([]);
   const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState('');
+  const [concurrentCalls, setConcurrentCalls] = useState(2);
+  const [isConcurrentCallsModalOpen, setIsConcurrentCallsModalOpen] = useState(false);
 
   const recordsPerPage = 10;
 
@@ -46,6 +48,7 @@ const CampaignDetailPage: React.FC = () => {
           }
           setCallerPhone(result.data.campaign.callerPhone || '');
           setIncludeMetadata(result.data.campaign.includeMetadata ?? true);
+          setConcurrentCalls(result.data.campaign.concurrent_calls || 2);
         }
 
         // Fetch Phone Numbers
@@ -252,6 +255,28 @@ const CampaignDetailPage: React.FC = () => {
     }
   };
 
+  const handleSetConcurrentCalls = async () => {
+    try {
+      if (concurrentCalls < 1 || concurrentCalls > 10) {
+        alert('Concurrent calls must be between 1 and 10');
+        return;
+      }
+
+      await campaignApi.updateConcurrentCalls(id!, user!.id, concurrentCalls);
+
+      // Refresh campaign data
+      const result = await campaignApi.fetchCampaign(id!, user!.id);
+      if (result.success) {
+        setCampaign(result.data.campaign);
+      }
+
+      setIsConcurrentCallsModalOpen(false);
+      alert('Concurrent calls limit updated successfully!');
+    } catch (err: any) {
+      alert('Failed to update concurrent calls: ' + err.message);
+    }
+  };
+
   if (loading) return <div className="text-center p-10 text-white">Loading...</div>;
   if (!campaign) return <div className="text-center p-10 text-white">Campaign not found</div>;
 
@@ -272,6 +297,16 @@ const CampaignDetailPage: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 animate-slide-down">
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-white">Campaign: {campaign.name}</h1>
         <div className="flex gap-3 flex-wrap">
+          <button
+            onClick={() => setIsConcurrentCallsModalOpen(true)}
+            className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center transition shadow-sm btn-animate"
+            title="Set concurrent calls limit"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+            Concurrent: {campaign.concurrent_calls || 2}
+          </button>
           <button
             onClick={() => document.getElementById('csv-file-input')?.click()}
             className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center transition shadow-sm btn-animate"
@@ -504,6 +539,46 @@ const CampaignDetailPage: React.FC = () => {
             <div className="flex justify-end gap-3">
               <button onClick={() => setIsAddRecordModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-gray-300 hover:text-slate-800 dark:hover:text-white transition">Cancel</button>
               <button onClick={handleAddRecord} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition shadow-md">Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConcurrentCallsModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white dark:bg-darkbg-light p-6 rounded-lg w-full max-w-md shadow-2xl border border-slate-200 dark:border-gray-700 card-animate">
+            <h3 className="text-xl font-bold mb-4 text-slate-800 dark:text-white">Set Concurrent Calls</h3>
+            <p className="text-sm text-slate-600 dark:text-gray-400 mb-4">
+              Control how many calls are made simultaneously. Lower values are more stable and recommended.
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm text-slate-600 dark:text-gray-400 mb-2">Concurrent Calls</label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-gray-600 rounded-lg p-2 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-primary"
+                value={concurrentCalls}
+                onChange={(e) => setConcurrentCalls(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+              />
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center text-xs text-slate-500 dark:text-gray-500">
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                  <span>1-2 calls: Recommended (Most Stable)</span>
+                </div>
+                <div className="flex items-center text-xs text-slate-500 dark:text-gray-500">
+                  <span className="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-2"></span>
+                  <span>3-5 calls: Moderate</span>
+                </div>
+                <div className="flex items-center text-xs text-slate-500 dark:text-gray-500">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-2"></span>
+                  <span>6-10 calls: High Load (Not Recommended)</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setIsConcurrentCallsModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-gray-300 hover:text-slate-800 dark:hover:text-white transition">Cancel</button>
+              <button onClick={handleSetConcurrentCalls} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition shadow-md">Save</button>
             </div>
           </div>
         </div>

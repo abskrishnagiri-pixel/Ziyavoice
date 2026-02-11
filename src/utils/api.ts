@@ -3,7 +3,7 @@
  * Change this URL to update the backend URL everywhere in the application
  */
 export const getApiBaseUrl = () => {
-  return "https://ziyavoice-production-5e44.up.railway.app";
+  return "http://localhost:5000";
 };
 
 export const fetchCampaigns = async (userId: string) => {
@@ -168,6 +168,23 @@ export const deleteCampaign = async (id: string, userId: string) => {
   const response = await fetch(`${getApiBaseUrl()}/api/campaigns/${id}?userId=${userId}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' }
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  // Validate content type before parsing JSON
+  const contentType = response.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    throw new Error('Received non-JSON response from server');
+  }
+  return response.json();
+};
+
+export const updateConcurrentCalls = async (id: string, userId: string, concurrentCalls: number) => {
+  const response = await fetch(`${getApiBaseUrl()}/api/campaigns/${id}/concurrent-calls`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, concurrentCalls })
   });
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);

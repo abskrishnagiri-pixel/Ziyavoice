@@ -33,7 +33,7 @@ export class GoogleSheetsService {
   async appendDataToSheet(data: Record<string, any>, sheetName?: string): Promise<boolean> {
     try {
       // Call the backend API to append data to Google Sheets
-      const response = await fetch(`${getApiBaseUrl()}/tools/google-sheets/append`, {
+      const response = await fetch(`${getApiBaseUrl()}/api/tools/google-sheets/append`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -46,7 +46,8 @@ export class GoogleSheetsService {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to append data to Google Sheets: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to append data to Google Sheets: ${response.statusText}`);
       }
 
       const result = await response.json();
