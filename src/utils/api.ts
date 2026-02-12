@@ -179,3 +179,20 @@ export const deleteCampaign = async (id: string, userId: string) => {
   }
   return response.json();
 };
+
+export const updateConcurrentCalls = async (id: string, userId: string, concurrentCalls: number) => {
+  const response = await fetch(`${getApiBaseUrl()}/api/campaigns/${id}/concurrent-calls`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, concurrentCalls })
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  // Validate content type before parsing JSON
+  const contentType = response.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    throw new Error('Received non-JSON response from server');
+  }
+  return response.json();
+};

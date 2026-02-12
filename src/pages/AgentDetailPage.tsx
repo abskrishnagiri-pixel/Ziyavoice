@@ -217,6 +217,7 @@ const AgentDetailPage: React.FC<AgentDetailPageProps> = ({ agent: initialAgent, 
 
     const [isToolsModalOpen, setToolsModalOpen] = useState(false);
     const [editingTool, setEditingTool] = useState<Tool | null>(null);
+    const [isGoogleSheetsSharingModalOpen, setGoogleSheetsSharingModalOpen] = useState(false);
 
     const [isKnowledgeModalOpen, setKnowledgeModalOpen] = useState(false);
 
@@ -1428,6 +1429,11 @@ When you need to collect information from the user, ask for the required paramet
         setToolsModalOpen(false);
         setNewTool(initialNewToolState);
         setEditingTool(null);
+
+        // Show Google Sheets sharing instructions if this is a Google Sheets tool
+        if (newToolFunctionType === 'GoogleSheets' && finalTool.webhookUrl) {
+            setGoogleSheetsSharingModalOpen(true);
+        }
     };
 
     const handleNewToolChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setNewTool(p => ({ ...p, [e.target.name]: e.target.value }));
@@ -2165,6 +2171,113 @@ When you need to collect information from the user, ask for the required paramet
                     currentLanguageId={editedAgent.language}
                     voiceProviderId={getVoiceProviderById(editedAgent.voiceId)}
                 />
+            )}
+            {isGoogleSheetsSharingModalOpen && (
+                <Modal isOpen={true} onClose={() => setGoogleSheetsSharingModalOpen(false)} title="📊 Share Your Google Sheet">
+                    <div className="space-y-4">
+                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                            <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2 flex items-center">
+                                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                </svg>
+                                Important: Share Your Sheet
+                            </h4>
+                            <p className="text-sm text-blue-800 dark:text-blue-200">
+                                For the system to save data to your Google Sheet, you must share it with our service account.
+                            </p>
+                        </div>
+
+                        <div className="space-y-3">
+                            <h5 className="font-medium text-slate-700 dark:text-slate-200">Follow these steps:</h5>
+
+                            <div className="space-y-2">
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">1</span>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 pt-0.5">
+                                        Open your Google Sheet
+                                    </p>
+                                </div>
+
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">2</span>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 pt-0.5">
+                                        Click the <strong>"Share"</strong> button (top right corner)
+                                    </p>
+                                </div>
+
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">3</span>
+                                    <div className="flex-1 pt-0.5">
+                                        <p className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+                                            Add this email address:
+                                        </p>
+                                        <div className="bg-slate-100 dark:bg-slate-800 rounded-md p-3 border border-slate-300 dark:border-slate-600">
+                                            <div className="flex items-center justify-between">
+                                                <code className="text-sm text-slate-800 dark:text-slate-200 break-all">
+                                                    ziyavoice@stoked-brand-423611-i3.iam.gserviceaccount.com
+                                                </code>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText('ziyavoice@stoked-brand-423611-i3.iam.gserviceaccount.com');
+                                                        alert('Email copied to clipboard!');
+                                                    }}
+                                                    className="ml-2 flex-shrink-0 p-2 text-primary hover:bg-primary/10 rounded transition-colors"
+                                                    title="Copy email"
+                                                >
+                                                    <DocumentDuplicateIcon className="w-5 h-5" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">4</span>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 pt-0.5">
+                                        Set permission to <strong>"Editor"</strong>
+                                    </p>
+                                </div>
+
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">5</span>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 pt-0.5">
+                                        Uncheck "Notify people" (optional)
+                                    </p>
+                                </div>
+
+                                <div className="flex items-start">
+                                    <span className="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">6</span>
+                                    <p className="text-sm text-slate-600 dark:text-slate-300 pt-0.5">
+                                        Click <strong>"Share"</strong> or <strong>"Send"</strong>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
+                            <p className="text-sm text-emerald-800 dark:text-emerald-200">
+                                ✅ <strong>That's it!</strong> Your voice agent will now be able to save collected data to your Google Sheet automatically.
+                            </p>
+                        </div>
+
+                        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                            <p className="text-xs text-amber-800 dark:text-amber-200">
+                                <strong>Note:</strong> This email is a service account (like a robot user). It's safe to share publicly and cannot access anything without proper permissions.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
+                        <button
+                            type="button"
+                            onClick={() => setGoogleSheetsSharingModalOpen(false)}
+                            className="bg-primary text-white px-6 py-2 rounded-md font-semibold hover:bg-primary-dark transition-colors"
+                        >
+                            Got it!
+                        </button>
+                    </div>
+                </Modal>
             )}
             {userId && (
                 <KnowledgeModal

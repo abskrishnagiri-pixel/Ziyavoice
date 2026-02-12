@@ -63,9 +63,29 @@ class MediaStreamHandler {
         return session;
     }
 
-    endSession(callId) {
+    async endSession(callId) {
         const session = sessions.get(callId);
         if (session) {
+            // Execute tools marked to run after call
+            if (session.tools && session.tools.length > 0 && session.agentId) {
+                const afterCallTools = session.tools.filter(tool => tool.runAfterCall);
+                if (afterCallTools.length > 0) {
+                    console.log(`🔧 Executing ${afterCallTools.length} after-call tools...`);
+
+                    const ToolExecutionService = require('./toolExecutionService.js');
+                    const toolExecutionService = new ToolExecutionService(this.llmService, this.mysqlPool);
+
+                    // Execute after-call tools (don't await to avoid blocking)
+                    toolExecutionService.processToolsAfterCall(session, afterCallTools)
+                        .then(() => {
+                            console.log('✅ After-call tools executed successfully');
+                        })
+                        .catch(err => {
+                            console.error('❌ Error executing after-call tools:', err);
+                        });
+                }
+            }
+
             // Calculate and charge for Twilio usage
             if (session.startTime && session.userId && this.costCalculator) {
                 const endTime = new Date();

@@ -247,7 +247,7 @@ app.get('/api/auth/google/callback',
     console.log('✅ Google OAuth successful for:', user.email);
 
     // Redirect to frontend with user data
-    const frontendUrl = process.env.FRONTEND_URL || 'https://ziyavoice-production-5e44.up.railway.app';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5000';
     res.redirect(`${frontendUrl}/login?user=${encodeURIComponent(JSON.stringify(user))}`);
   }
 );
@@ -3040,16 +3040,44 @@ app.delete('/api/campaigns/:campaignId/records/:recordId', async (req, res) => {
 // Google Sheets endpoint for appending data
 app.post('/api/tools/google-sheets/append', async (req, res) => {
   try {
-    const { spreadsheetId, data, sheetName } = req.body;
-    if (!spreadsheetId || !data) {
-      return res.status(400).json({ success: false, message: 'Spreadsheet ID and data are required' });
+    const { spreadsheetId, data, sheetName, spreadsheetUrl } = req.body;
+
+    // Extract spreadsheet ID from URL if provided
+    let finalSpreadsheetId = spreadsheetId;
+    if (spreadsheetUrl && !spreadsheetId) {
+      finalSpreadsheetId = googleSheetsService.extractSpreadsheetId(spreadsheetUrl);
     }
 
-    // In a real implementation, you would use the Google Sheets API here
-    // For now, we'll just log the data and return success
-    console.log('Google Sheets append request:', { spreadsheetId, data, sheetName });
+    if (!finalSpreadsheetId || !data) {
+      return res.status(400).json({
+        success: false,
+        message: 'Spreadsheet ID (or URL) and data are required'
+      });
+    }
 
-    res.json({ success: true, message: 'Data appended successfully' });
+    console.log('📊 Google Sheets append request:', {
+      spreadsheetId: finalSpreadsheetId,
+      sheetName: sheetName || 'Data Collection',
+      dataKeys: Object.keys(data)
+    });
+
+    // Use the actual Google Sheets service to append data
+    const result = await googleSheetsService.appendGenericRow(
+      finalSpreadsheetId,
+      data,
+      sheetName || 'Data Collection'
+    );
+
+    if (result.success) {
+      console.log('✅ Data successfully appended to Google Sheets');
+      res.json({ success: true, message: 'Data appended successfully' });
+    } else {
+      console.error('❌ Failed to append data to Google Sheets:', result.error);
+      res.status(500).json({
+        success: false,
+        message: result.error || 'Failed to append data'
+      });
+    }
   } catch (error) {
     console.error('Error appending data to Google Sheets:', error);
     res.status(500).json({ success: false, message: error.message });
@@ -3833,6 +3861,38 @@ app.post('/api/campaigns/:id/stop', async (req, res) => {
   }
   catch (error) {
     console.error('Error stopping campaign:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update concurrent calls limit for campaign
+app.put('/api/campaigns/:id/concurrent-calls', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, concurrentCalls } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    if (!concurrentCalls || concurrentCalls < 1 || concurrentCalls > 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Concurrent calls must be between 1 and 10'
+      });
+    }
+
+    // Update campaign concurrent calls
+    await mysqlPool.execute(
+      'UPDATE campaigns SET concurrent_calls = ? WHERE id = ? AND user_id = ?',
+      [concurrentCalls, id, userId]
+    );
+
+    const updatedCampaign = await campaignService.getCampaign(id);
+    res.json({ success: true, data: updatedCampaign });
+  }
+  catch (error) {
+    console.error('Error updating concurrent calls:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
