@@ -2425,6 +2425,62 @@ When you need to collect information from the user, ask for the required paramet
                         </div>
                     </SettingsCard>
 
+                    <SettingsCard title="Webhook Integration">
+                        <SettingsToggle
+                            label="Enable Webhook Delivery"
+                            description="Send extracted structured data to your endpoint after each call."
+                            name="settings.webhookEnabled"
+                            checked={editedAgent.settings.webhookEnabled || false}
+                            onChange={handleSettingsChange}
+                        />
+
+                        {editedAgent.settings.webhookEnabled && (
+                            <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                                <div>
+                                    <label htmlFor="webhookUrl" className="block text-sm font-medium text-slate-700 dark:text-slate-200">Webhook URL</label>
+                                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">HTTPS endpoint to receive POST requests.</p>
+                                    <input
+                                        type="text"
+                                        id="webhookUrl"
+                                        name="settings.webhookUrl"
+                                        value={editedAgent.settings.webhookUrl || ''}
+                                        onChange={handleSettingsChange}
+                                        placeholder="https://api.yourdomain.com/webhook"
+                                        className="mt-2 w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label htmlFor="webhookSecret" className="block text-sm font-medium text-slate-700 dark:text-slate-200">Webhook Secret</label>
+                                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Secret key used to sign the payload (HMAC SHA256).</p>
+                                    <input
+                                        type="password"
+                                        id="webhookSecret"
+                                        name="settings.webhookSecret"
+                                        value={editedAgent.settings.webhookSecret || ''}
+                                        onChange={handleSettingsChange}
+                                        placeholder="Enter a strong secret key"
+                                        className="mt-2 w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label htmlFor="webhookRetryAttempts" className="block text-sm font-medium text-slate-700 dark:text-slate-200">Retry Attempts</label>
+                                    <input
+                                        type="number"
+                                        id="webhookRetryAttempts"
+                                        name="settings.webhookRetryAttempts"
+                                        value={editedAgent.settings.webhookRetryAttempts || 3}
+                                        onChange={handleSettingsChange}
+                                        min="0"
+                                        max="10"
+                                        className="mt-2 w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </SettingsCard>
+
                 </div>
                 {/* Right Column */}
                 <div className="lg:col-span-1">

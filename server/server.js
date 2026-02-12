@@ -86,10 +86,8 @@ const authService = new AuthService(mysqlPool);
 const twilioService = new TwilioService();
 const twilioBasicService = new TwilioBasicService();
 const adminService = new AdminService(mysqlPool);
-//Import Google Sheets Service at the top of server.js
-const googleSheetsService = require('./services/googleSheetsService.js');
-// Initialize Google Sheets on server startup
-googleSheetsService.initialize();
+// Google Sheets service removed
+
 // Initialize MediaStreamHandler for voice call pipeline
 const agentService = new AgentService(mysqlPool);
 
@@ -102,7 +100,6 @@ console.log('✅ Voice Sync Service initialized');
 
 console.log('✅ WebSocket support enabled on HTTP server');
 
-// Initialize Google Voice Stream Handler
 // Initialize Google Voice Stream Handler
 const GoogleVoiceStreamHandler = require('./services/GoogleVoiceStreamHandler.js');
 const googleVoiceHandler = new GoogleVoiceStreamHandler(voiceSyncService, walletService);
@@ -141,7 +138,8 @@ const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLA
 const sarvamApiKey = process.env.SARVAM_API_KEY;
 
 let browserVoiceHandler;
-if (deepgramApiKey) {
+// Initialize if either Deepgram OR Sarvam is available, or just try to initialize and let the handler complain if both are missing
+if (deepgramApiKey || sarvamApiKey) {
   try {
     browserVoiceHandler = new BrowserVoiceHandler(
       deepgramApiKey,
@@ -159,12 +157,12 @@ if (deepgramApiKey) {
     console.log('   - Gemini LLM: ' + (geminiApiKey ? '✅' : '❌'));
     console.log('   - OpenAI LLM: ' + (openaiApiKey ? '✅' : '❌'));
     console.log('   - ElevenLabs TTS: ' + (elevenLabsApiKey ? '✅' : '❌'));
-    console.log('   - Sarvam TTS: ' + (sarvamApiKey ? '✅' : '❌'));
+    console.log('   - Sarvam TTS/STT: ' + (sarvamApiKey ? '✅' : '❌'));
   } catch (error) {
     console.error('Failed to initialize BrowserVoiceHandler:', error.message);
   }
 } else {
-  console.warn('⚠️ BrowserVoiceHandler not initialized (missing Deepgram API key)');
+  console.warn('⚠️ BrowserVoiceHandler not initialized (missing STT API keys)');
 }
 
 // === ADD THIS BLOCK ===
@@ -3037,52 +3035,8 @@ app.delete('/api/campaigns/:campaignId/records/:recordId', async (req, res) => {
   }
 });
 
-// Google Sheets endpoint for appending data
-app.post('/api/tools/google-sheets/append', async (req, res) => {
-  try {
-    const { spreadsheetId, data, sheetName, spreadsheetUrl } = req.body;
+// Google Sheets endpoint removed
 
-    // Extract spreadsheet ID from URL if provided
-    let finalSpreadsheetId = spreadsheetId;
-    if (spreadsheetUrl && !spreadsheetId) {
-      finalSpreadsheetId = googleSheetsService.extractSpreadsheetId(spreadsheetUrl);
-    }
-
-    if (!finalSpreadsheetId || !data) {
-      return res.status(400).json({
-        success: false,
-        message: 'Spreadsheet ID (or URL) and data are required'
-      });
-    }
-
-    console.log('📊 Google Sheets append request:', {
-      spreadsheetId: finalSpreadsheetId,
-      sheetName: sheetName || 'Data Collection',
-      dataKeys: Object.keys(data)
-    });
-
-    // Use the actual Google Sheets service to append data
-    const result = await googleSheetsService.appendGenericRow(
-      finalSpreadsheetId,
-      data,
-      sheetName || 'Data Collection'
-    );
-
-    if (result.success) {
-      console.log('✅ Data successfully appended to Google Sheets');
-      res.json({ success: true, message: 'Data appended successfully' });
-    } else {
-      console.error('❌ Failed to append data to Google Sheets:', result.error);
-      res.status(500).json({
-        success: false,
-        message: result.error || 'Failed to append data'
-      });
-    }
-  } catch (error) {
-    console.error('Error appending data to Google Sheets:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 // Get available voices from ElevenLabs
 app.get('/api/voices/elevenlabs', async (req, res) => {
   try {

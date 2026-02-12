@@ -215,6 +215,79 @@ var LLMService = /** @class */ (function () {
         throw new Error("Stream not implemented in this version");
     };
 
+    /**
+     * Extract structured JSON data from conversation
+     * @param {Object} params
+     * @param {string} params.model - Model to use
+     * @param {Array} params.history - Conversation history
+     * @param {string} params.schema - Description of the schema to extract
+     * @returns {Promise<Object>} Extracted JSON object or null
+     */
+    LLMService.prototype.extractJson = function (params) {
+        return __awaiter(this, void 0, void 0, function () {
+            var model, history, schema, systemInstruction, prompt, response, text, jsonMatch, jsonStr, parsed, error_3;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        _a.trys.push([0, 2, , 3]);
+                        model = params.model || 'models/gemini-2.0-flash';
+                        history = params.history || [];
+                        schema = params.schema || '';
+
+                        systemInstruction = `
+You are a strict data extraction engine.
+Your task is to extract information from the conversation history based on the provided schema.
+
+RULES:
+1. Return ONLY valid JSON.
+2. Do NOT include markdown formatting (like \`\`\`json).
+3. Do NOT include any explanations or extra text.
+4. If a field is missing in the conversation, set it to null.
+5. The output must reliably parse with JSON.parse().
+
+SCHEMA:
+${schema}
+`;
+                        // Create a user message with the conversation history to ensure the model sees it clearly
+                        // processing history to simple text format if it's complex object
+                        const conversationText = history.map(msg =>
+                            `${msg.role}: ${Array.isArray(msg.parts) ? msg.parts.map(p => p.text).join('') : msg.text}`
+                        ).join('\n');
+
+                        prompt = `Extract data from this conversation:\n\n${conversationText}`;
+
+                        return [4 /*yield*/, this.generateContent({
+                            model: model,
+                            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                            config: { systemInstruction: systemInstruction }
+                        })];
+
+                    case 1:
+                        response = _a.sent();
+                        text = response.text || '';
+
+                        // Clean up markdown if present despite instructions
+                        jsonMatch = text.match(/\{[\s\S]*\}/);
+                        jsonStr = jsonMatch ? jsonMatch[0] : text;
+
+                        try {
+                            parsed = JSON.parse(jsonStr);
+                            return [2 /*return*/, parsed];
+                        } catch (e) {
+                            console.error('❌ Failed to parse JSON from LLM:', text);
+                            return [2 /*return*/, null];
+                        }
+                        return [3 /*break*/, 3];
+                    case 2:
+                        error_3 = _a.sent();
+                        console.error('❌ Error in extractJson:', error_3);
+                        return [2 /*return*/, null];
+                    case 3: return [2 /*return*/];
+                }
+            });
+        });
+    };
+
     return LLMService;
 }());
 exports.LLMService = LLMService;

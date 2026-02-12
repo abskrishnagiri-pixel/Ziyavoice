@@ -1,7 +1,10 @@
-const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
+// Removed Deepgram import
 const { LLMService } = require("../llmService.js");
+const SarvamSttService = require('./sarvamSttService.js');
 const WalletService = require('./walletService.js');
 const CostCalculator = require('./costCalculator.js');
+const AgentService = require('./agentService.js');
+const ToolExecutionService = require('./toolExecutionService.js');
 const fetch = require('node-fetch');
 
 // Session management
@@ -9,39 +12,49 @@ const sessions = new Map();
 
 class BrowserVoiceHandler {
     constructor(deepgramApiKey, geminiApiKey, openaiApiKey, elevenLabsApiKey, sarvamApiKey, mysqlPool = null) {
-        if (!deepgramApiKey) throw new Error("Missing Deepgram API Key");
+        if (!deepgramApiKey && !sarvamApiKey) throw new Error("Missing STT API Key (Deepgram or Sarvam)");
 
         // Removed strict check for Gemini API Key to allow STT-only or OpenAI-only usage
         // if (!geminiApiKey) throw new Error("Missing Gemini API Key");
 
-        this.deepgramApiKey = deepgramApiKey;
+        this.deepgramApiKey = deepgramApiKey; // Kept for compatibility but unused
         this.geminiApiKey = geminiApiKey;
         this.openaiApiKey = openaiApiKey;
         this.elevenLabsApiKey = elevenLabsApiKey;
         this.sarvamApiKey = sarvamApiKey;
         this.mysqlPool = mysqlPool;
         this.llmService = new LLMService(geminiApiKey, openaiApiKey); // Pass both API keys
-        this.deepgramClient = createClient(deepgramApiKey);
+        this.sarvamSttService = new SarvamSttService(sarvamApiKey);
 
-        console.log('✅ BrowserVoiceHandler initialized');
+        // Initialize wallet and cost tracking services
+        if (mysqlPool) {
+            this.walletService = new WalletService(mysqlPool);
+            this.costCalculator = new CostCalculator(mysqlPool, this.walletService);
+        }
+
+        console.log('✅ BrowserVoiceHandler initialized (Sarvam STT enabled)');
     }
 
     /**
      * Create a new voice session for a browser client
      */
-    createSession(connectionId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null) {
+    createSession(connectionId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null, agentModel = null, agentSettings = null, tools = []) {
         const session = {
             connectionId,
             agentPrompt,
             agentVoiceId,
+            agentModel: agentModel || "gemini-2.0-flash",
+            agentSettings,
+            tools,
             ws,
             userId,
             agentId,
             conversationHistory: [],
-            deepgramConnection: null,
             elevenLabsConnection: null,
             isProcessing: false,
-            audioQueue: [],
+            audioQueue: [], // Unused, keeping for compatibility if needed
+            audioBuffer: [], // Accumulate audio chunks here
+            silenceTimer: null,
             startTime: Date.now(),
             totalInputTokens: 0,
             totalOutputTokens: 0,
@@ -49,7 +62,6 @@ class BrowserVoiceHandler {
             callLogId: null,
             userSpeechBuffer: '',
             lastSpeechTime: Date.now(),
-            silenceTimeout: null,
             isInterrupted: false,
         };
 
@@ -68,14 +80,8 @@ class BrowserVoiceHandler {
 
         console.log(`📴 Ending browser voice session: ${connectionId}`);
 
-        // Close Deepgram connection
-        if (session.deepgramConnection) {
-            try {
-                session.deepgramConnection.finish();
-            } catch (error) {
-                console.error('Error closing Deepgram connection:', error);
-            }
-        }
+        // Deepgram cleanup removed
+
 
         // Close ElevenLabs connection
         if (session.elevenLabsConnection) {
@@ -86,9 +92,9 @@ class BrowserVoiceHandler {
             }
         }
 
-        // Clear silence timeout
-        if (session.silenceTimeout) {
-            clearTimeout(session.silenceTimeout);
+        // Clear silence timer
+        if (session.silenceTimer) {
+            clearTimeout(session.silenceTimer);
         }
 
         // Log call end
@@ -111,169 +117,270 @@ class BrowserVoiceHandler {
         console.log(`🌐 New browser voice connection: ${connectionId}`);
         console.log(`   Voice ID: ${voiceId}, Agent ID: ${agentId}, User ID: ${userId}`);
 
-        // Create session
-        const session = this.createSession(connectionId, identity, voiceId, ws, userId, agentId);
+        (async () => {
+            // Load agent details if agentId is present
+            let agentPrompt = identity || "You are a helpful AI assistant.";
+            let agentVoiceId = voiceId || "21m00Tcm4TlvDq8ikWAM"; // default
+            let agentModel = "gemini-2.0-flash"; // default model
+            let greetingMessage = "Hello! How can I help you today?";
+            let tools = [];
+            let agent = null;
+            let settings = null;
 
-        // Initialize Deepgram streaming connection
-        this.initializeDeepgramStreaming(session);
+            if (agentId && userId && this.mysqlPool) {
+                try {
+                    const agentService = new AgentService(this.mysqlPool);
+                    agent = await agentService.getAgentById(userId, agentId);
+                    if (agent) {
+                        agentPrompt = agent.identity || agentPrompt;
+                        settings = agent.settings;
 
-        // Handle incoming messages from browser
-        ws.on('message', async (message) => {
-            try {
-                const data = JSON.parse(message);
+                        // Process Tools
+                        if (agent.settings && agent.settings.tools && agent.settings.tools.length > 0) {
+                            tools = agent.settings.tools;
+                            const toolDescriptions = tools.map(tool =>
+                                `- ${tool.name}: ${tool.description} (Parameters: ${tool.parameters?.map(p => `${p.name} (${p.type})${p.required ? ' [required]' : ''}`).join(', ') || 'None'})`
+                            ).join('\n');
 
-                switch (data.event) {
-                    case 'audio':
-                        // Forward audio to Deepgram for transcription
-                        await this.handleIncomingAudio(session, data.data);
-                        break;
+                            agentPrompt += `\n\nAvailable Tools:\n${toolDescriptions}\n\nWhen you need to collect information from the user, ask for the required parameters. When all required information is collected, respond with a JSON object in the format: {"tool": "tool_name", "data": {"param1": "value1", "param2": "value2"}}. Do NOT add any other text before or after the JSON.`;
+                        }
 
-                    case 'ping':
-                        ws.send(JSON.stringify({ event: 'pong' }));
-                        break;
-
-                    case 'stop-speaking':
-                        // Handle user interruption
-                        this.handleInterruption(session);
-                        break;
-
-                    default:
-                        console.log(`Unknown event: ${data.event}`);
+                        if (agent.voiceId) agentVoiceId = agent.voiceId;
+                        if (agent.model) {
+                            agentModel = agent.model;
+                            console.log(`🤖 Using agent model: ${agentModel}`);
+                        }
+                        if (agent.settings?.greetingLine) greetingMessage = agent.settings.greetingLine;
+                        console.log(`✅ Loaded agent details for ${agent.name} with ${tools.length} tools`);
+                    }
+                } catch (err) {
+                    console.error("⚠️ Error loading agent details:", err);
                 }
-            } catch (error) {
-                console.error('Error processing browser message:', error);
-                ws.send(JSON.stringify({
-                    event: 'error',
-                    message: 'Failed to process message'
-                }));
             }
-        });
 
-        // Handle WebSocket close
-        ws.on('close', async () => {
-            console.log(`🔌 Browser disconnected: ${connectionId}`);
-            await this.endSession(connectionId);
-        });
+            // Check user balance before starting call
+            if (userId && this.walletService) {
+                try {
+                    const balanceCheck = await this.walletService.checkBalanceForCall(userId, 0.10);
+                    if (!balanceCheck.allowed) {
+                        console.error(`❌ Insufficient balance for user ${userId}: ${balanceCheck.message}`);
+                        ws.send(JSON.stringify({
+                            event: 'error',
+                            message: balanceCheck.message,
+                            balance: balanceCheck.balance
+                        }));
+                        ws.close();
+                        return;
+                    }
+                    console.log(`✅ Balance check passed: $${balanceCheck.balance.toFixed(4)}`);
+                } catch (err) {
+                    console.error("⚠️ Error checking balance:", err);
+                }
+            }
 
-        // Handle WebSocket errors
-        ws.on('error', (error) => {
-            console.error(`❌ Browser WebSocket error (${connectionId}):`, error);
-        });
+            // Create session
+            const session = this.createSession(connectionId, agentPrompt, agentVoiceId, ws, userId, agentId, agentModel, settings, tools);
 
-        // Log call start
-        this.logCallStart(session);
+            // Send initial greeting if configured
+            // Use the greeting from agent settings if available
+            this.sendInitialGreeting(session, greetingMessage);
 
-        // Send initial greeting if configured
-        this.sendInitialGreeting(session);
+            // Handle incoming messages from browser
+            ws.on('message', async (message) => {
+                try {
+                    const data = JSON.parse(message);
+
+                    switch (data.event) {
+                        case 'audio':
+                            // Buffer audio and perform VAD
+                            await this.handleIncomingAudio(session, data.data);
+                            break;
+
+                        case 'ping':
+                            ws.send(JSON.stringify({ event: 'pong' }));
+                            break;
+
+                        case 'stop-speaking':
+                            // Handle user interruption
+                            this.handleInterruption(session);
+                            break;
+
+                        default:
+                            console.log(`Unknown event: ${data.event}`);
+                    }
+                } catch (error) {
+                    console.error('Error processing browser message:', error);
+                    ws.send(JSON.stringify({
+                        event: 'error',
+                        message: 'Failed to process message'
+                    }));
+                }
+            });
+
+            // Handle WebSocket close
+            ws.on('close', async () => {
+                console.log(`🔌 Browser disconnected: ${connectionId}`);
+                await this.endSession(connectionId);
+            });
+
+            // Handle WebSocket errors
+            ws.on('error', (error) => {
+                console.error(`❌ Browser WebSocket error (${connectionId}):`, error);
+            });
+
+            // Log call start
+            this.logCallStart(session);
+
+        })();
     }
 
     /**
-     * Initialize Deepgram streaming connection for real-time STT
+     * Initialize Deepgram streaming connection - Removed
      */
     initializeDeepgramStreaming(session) {
-        try {
-            console.log(`🎤 Initializing Deepgram streaming for session: ${session.connectionId}`);
-
-            const deepgramConnection = this.deepgramClient.listen.live({
-                model: 'nova-2',
-                language: 'en-US',
-                smart_format: true,
-                interim_results: true,
-                utterance_end_ms: 1000,
-                vad_events: true,
-                encoding: 'linear16',
-                sample_rate: 16000,
-                channels: 1,
-            });
-
-            session.deepgramConnection = deepgramConnection;
-
-            // Handle transcription results
-            deepgramConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
-                const transcript = data.channel?.alternatives?.[0]?.transcript;
-                const isFinal = data.is_final;
-
-                if (transcript && transcript.trim()) {
-                    console.log(`📝 Transcript (${isFinal ? 'final' : 'interim'}): ${transcript}`);
-
-                    if (isFinal) {
-                        // Send transcript to browser
-                        session.ws.send(JSON.stringify({
-                            event: 'transcript',
-                            text: transcript,
-                            isFinal: true
-                        }));
-
-                        // Add to conversation history
-                        this.appendToContext(session, transcript, 'user');
-
-                        // Process with LLM
-                        await this.processUserInput(session, transcript);
-                    } else {
-                        // Send interim results to browser for UI feedback
-                        session.ws.send(JSON.stringify({
-                            event: 'transcript',
-                            text: transcript,
-                            isFinal: false
-                        }));
-                    }
-                }
-            });
-
-            // Handle utterance end (user stopped speaking)
-            deepgramConnection.on(LiveTranscriptionEvents.UtteranceEnd, async () => {
-                console.log('🔇 Utterance end detected');
-                // This can be used to trigger LLM processing if needed
-            });
-
-            // Handle errors
-            deepgramConnection.on(LiveTranscriptionEvents.Error, (error) => {
-                console.error('❌ Deepgram error:', error);
-                session.ws.send(JSON.stringify({
-                    event: 'error',
-                    message: 'Speech recognition error'
-                }));
-            });
-
-            // Handle connection close
-            deepgramConnection.on(LiveTranscriptionEvents.Close, () => {
-                console.log('🔌 Deepgram connection closed');
-            });
-
-            console.log('✅ Deepgram streaming initialized');
-
-        } catch (error) {
-            console.error('❌ Failed to initialize Deepgram streaming:', error);
-            session.ws.send(JSON.stringify({
-                event: 'error',
-                message: 'Failed to initialize speech recognition'
-            }));
-        }
+        // Deprecated/Removed
+        console.log('Deepgram streaming disabled in favor of Sarvam STT');
     }
 
     /**
      * Handle incoming audio from browser
+     * Buffers audio and uses simple VAD to detect silence/utterance end
      */
     async handleIncomingAudio(session, base64Audio) {
         try {
-            if (!session.deepgramConnection) {
-                console.error('No Deepgram connection available');
-                return;
+            // Decode base64 audio to buffer (Int16 PCM)
+            const audioChunk = Buffer.from(base64Audio, 'base64');
+            session.audioBuffer.push(audioChunk);
+
+            // Simple energy-based VAD (Voice Activity Detection)
+            // Calculate RMS (Root Mean Square) amplitude
+            let sumSquares = 0;
+            // Iterate by 2 bytes (16-bit samples)
+            for (let i = 0; i < audioChunk.length; i += 2) {
+                const sample = audioChunk.readInt16LE(i);
+                sumSquares += sample * sample;
             }
+            const numSamples = audioChunk.length / 2;
+            const rms = Math.sqrt(sumSquares / numSamples);
 
-            // Decode base64 audio to buffer
-            const audioBuffer = Buffer.from(base64Audio, 'base64');
+            // Threshold for silence (adjustable)
+            // 0x7FFF is max (32767). Low values like 500-1000 indicate silence.
+            // Frontend might already filter very quiet noise, but let's be safe.
+            const SILENCE_THRESHOLD = 500;
 
-            // Send to Deepgram for transcription
-            if (session.deepgramConnection.getReadyState() === 1) { // OPEN
-                session.deepgramConnection.send(audioBuffer);
+            if (rms > SILENCE_THRESHOLD) {
+                // Speech detected
+                session.lastSpeechTime = Date.now();
+                if (session.silenceTimer) {
+                    clearTimeout(session.silenceTimer);
+                    session.silenceTimer = null;
+                }
             } else {
-                console.warn('Deepgram connection not ready, state:', session.deepgramConnection.getReadyState());
+                // Silence detected
+                if (!session.silenceTimer && session.audioBuffer.length > 0) {
+                    // Start silence timer
+                    session.silenceTimer = setTimeout(() => {
+                        this.processBufferedAudio(session);
+                    }, 1500); // 1.5 seconds of silence = end of utterance
+                }
             }
 
         } catch (error) {
             console.error('Error handling incoming audio:', error);
         }
+    }
+
+    /**
+     * Process buffered audio: Transcribe with Sarvam -> LLM
+     */
+    async processBufferedAudio(session) {
+        if (session.audioBuffer.length === 0) return;
+
+        // Reset timer
+        session.silenceTimer = null;
+
+        // Concatenate buffer
+        const completeBuffer = Buffer.concat(session.audioBuffer);
+        // Clear buffer immediately to avoid duplicates
+        session.audioBuffer = [];
+
+        // Skip if buffer is too short (likely just noise)
+        if (completeBuffer.length < 3200) { // < 0.1s at 16kHz
+            return;
+        }
+
+        try {
+            console.log(`🎤 Sending ${completeBuffer.length} bytes to Sarvam STT...`);
+
+            // Convert raw PCM to WAV container for Sarvam
+            const wavBuffer = this.createWavHeader(completeBuffer);
+
+            // Call Sarvam STT
+            const transcript = await this.sarvamSttService.transcribe(wavBuffer);
+
+            if (transcript && transcript.trim()) {
+                console.log(`📝 Sarvam Transcript: ${transcript}`);
+
+                // Send user transcript to browser
+                session.ws.send(JSON.stringify({
+                    event: 'transcript',
+                    text: transcript,
+                    isFinal: true
+                }));
+
+                // Add to conversation history
+                this.appendToContext(session, transcript, 'user');
+
+                // Process with LLM
+                await this.processUserInput(session, transcript);
+            } else {
+                console.log('📝 Empty transcript from Sarvam');
+            }
+
+        } catch (error) {
+            console.error('❌ Sarvam STT processing error:', error);
+            session.ws.send(JSON.stringify({
+                event: 'error',
+                message: 'Speech recognition failed'
+            }));
+        }
+    }
+
+    /**
+     * Create WAV header for PCM data
+     */
+    createWavHeader(pcmData) {
+        const numChannels = 1;
+        const sampleRate = 16000;
+        const bitsPerSample = 16;
+        const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+        const blockAlign = numChannels * (bitsPerSample / 8);
+        const dataSize = pcmData.length;
+        const buffer = Buffer.alloc(44 + dataSize);
+
+        // RIFF chunk
+        buffer.write('RIFF', 0);
+        buffer.writeUInt32LE(36 + dataSize, 4);
+        buffer.write('WAVE', 8);
+
+        // fmt sub-chunk
+        buffer.write('fmt ', 12);
+        buffer.writeUInt32LE(16, 16); // Subchunk1Size
+        buffer.writeUInt16LE(1, 20); // AudioFormat (1 = PCM)
+        buffer.writeUInt16LE(numChannels, 22);
+        buffer.writeUInt32LE(sampleRate, 24);
+        buffer.writeUInt32LE(byteRate, 28);
+        buffer.writeUInt16LE(blockAlign, 32);
+        buffer.writeUInt16LE(bitsPerSample, 34);
+
+        // data sub-chunk
+        buffer.write('data', 36);
+        buffer.writeUInt32LE(dataSize, 40);
+
+        // Write PCM data
+        pcmData.copy(buffer, 44);
+
+        return buffer;
     }
 
     /**
@@ -324,6 +431,7 @@ class BrowserVoiceHandler {
     async callLLM(session, userInput) {
         try {
             console.log(`🧠 Calling LLM for session: ${session.connectionId}`);
+            const modelToUse = session.agentModel || "gemini-2.0-flash";
 
             // Prepare conversation history in the correct format
             const contents = session.conversationHistory.map(msg => ({
@@ -333,20 +441,58 @@ class BrowserVoiceHandler {
 
             // Call LLM service with correct request format
             const response = await this.llmService.generateContent({
-                model: 'gemini-2.0-flash-exp',
+                model: modelToUse,
                 contents: contents,
                 config: {
                     systemInstruction: session.agentPrompt
                 }
             });
 
-            console.log(`✅ LLM response: ${response.text.substring(0, 100)}...`);
+            const text = response.text;
+            console.log(`✅ LLM response: ${text.substring(0, 100)}...`);
 
             // Update token counts if available
             if (response.inputTokens) session.totalInputTokens += response.inputTokens;
             if (response.outputTokens) session.totalOutputTokens += response.outputTokens;
 
-            return response.text;
+            // Check for Tool Call (JSON format)
+            try {
+                // Remove potential markdown code blocks if present
+                const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                if (cleanText.startsWith('{') && cleanText.endsWith('}')) {
+                    const parsed = JSON.parse(cleanText);
+
+                    if (parsed.tool && parsed.data) {
+                        console.log(`🛠️ Tool usage detected: ${parsed.tool}`);
+
+                        // Handle Tool Execution
+                        if (parsed.tool && this.mysqlPool) {
+                            const toolService = new ToolExecutionService(this.llmService, this.mysqlPool);
+
+                            // Find the tool definition
+                            const tool = session.tools && session.tools.find(t => t.name === parsed.tool);
+
+                            if (tool) {
+                                // Execute the tool
+                                await toolService.executeTool(tool, parsed.data, session, session.agentSettings);
+
+                                // Add tool result indicator to context
+                                this.appendToContext(session, JSON.stringify({ tool: parsed.tool, status: "success", message: "Data processing initiated" }), "user");
+
+                                // Recursively call LLM to get the verbal response
+                                return await this.callLLM(session, "Tool executed successfully. Please continue.");
+                            } else {
+                                console.warn(`Tool ${parsed.tool} not found in configuration`);
+                            }
+                        }
+                    }
+                }
+            } catch (jsonError) {
+                // Not a valid JSON tool call, just regular text -> continue
+                // console.log("Response is not JSON tool call");
+            }
+
+            return text;
 
         } catch (error) {
             console.error('❌ LLM call failed:', error);
@@ -536,10 +682,10 @@ class BrowserVoiceHandler {
     /**
      * Send initial greeting to user
      */
-    async sendInitialGreeting(session) {
+    async sendInitialGreeting(session, customGreeting = null) {
         try {
             // Check if agent prompt includes a greeting instruction
-            const greetingText = "Hello! How can I help you today?";
+            const greetingText = customGreeting || "Hello! How can I help you today?";
 
             // Small delay to ensure connection is stable
             setTimeout(async () => {
@@ -640,10 +786,8 @@ class BrowserVoiceHandler {
                 try {
                     console.log('💰 Calculating call costs...');
                     const usage = {
-                        deepgram: duration, // Approximate deepgram usage in seconds
-                        gemini: session.totalInputTokens + session.totalOutputTokens,
-                        elevenlabs: 0, // Will be tracked by character count if needed
-                        sarvam: 0 // Will be tracked by character count if needed
+                        deepgram: 0, // No longer using Deepgram
+                        sarvam: duration, // Approximate Sarvam usage (tracking duration for now, could actuaally be per-char for TTS or per-min for STT)
                     };
 
                     // Use CostCalculator if available
