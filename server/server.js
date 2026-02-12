@@ -138,7 +138,8 @@ const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLA
 const sarvamApiKey = process.env.SARVAM_API_KEY;
 
 let browserVoiceHandler;
-if (deepgramApiKey) {
+// Initialize if either Deepgram OR Sarvam is available, or just try to initialize and let the handler complain if both are missing
+if (deepgramApiKey || sarvamApiKey) {
   try {
     browserVoiceHandler = new BrowserVoiceHandler(
       deepgramApiKey,
@@ -156,12 +157,12 @@ if (deepgramApiKey) {
     console.log('   - Gemini LLM: ' + (geminiApiKey ? '✅' : '❌'));
     console.log('   - OpenAI LLM: ' + (openaiApiKey ? '✅' : '❌'));
     console.log('   - ElevenLabs TTS: ' + (elevenLabsApiKey ? '✅' : '❌'));
-    console.log('   - Sarvam TTS: ' + (sarvamApiKey ? '✅' : '❌'));
+    console.log('   - Sarvam TTS/STT: ' + (sarvamApiKey ? '✅' : '❌'));
   } catch (error) {
     console.error('Failed to initialize BrowserVoiceHandler:', error.message);
   }
 } else {
-  console.warn('⚠️ BrowserVoiceHandler not initialized (missing Deepgram API key)');
+  console.warn('⚠️ BrowserVoiceHandler not initialized (missing STT API keys)');
 }
 
 // === ADD THIS BLOCK ===
