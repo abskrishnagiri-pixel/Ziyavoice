@@ -113,6 +113,12 @@ class MediaStreamHandler {
         try {
             console.log(`📞 WebSocket connection initiated from handleConnection`);
 
+            // Extract from query params as fallback (for non-Twilio or early identification)
+            const queryParams = require('url').parse(req.url, true).query;
+            let queryCallId = queryParams.callId;
+            let queryAgentId = queryParams.agentId;
+            let queryUserId = queryParams.userId;
+
             // ✅ Set up error handler FIRST before any other operations
             ws.on("error", (error) => {
                 // Ignore UTF-8 errors from binary frames (Twilio sends binary audio data)
@@ -153,16 +159,16 @@ class MediaStreamHandler {
 
                         // Extract parameters from start event
                         const streamParams = data.start?.customParameters || {};
-                        callId = streamParams.callId || data.start?.callSid;
-                        agentId = streamParams.agentId;
-                        const userId = streamParams.userId;
+                        callId = streamParams.callId || queryCallId || data.start?.callSid;
+                        agentId = streamParams.agentId || queryAgentId;
+                        const userId = streamParams.userId || queryUserId;
 
                         console.log(`📞 Call ID: ${callId}`);
                         console.log(`🤖 Agent ID: ${agentId}`);
                         console.log(`👤 User ID: ${userId}`);
 
                         if (!callId) {
-                            console.error("❌ No callId in start event");
+                            console.error("❌ No callId found in start event or query params");
                             ws.close();
                             return;
                         }

@@ -28,7 +28,7 @@ const App: React.FC = () => {
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             return 'dark';
         }
-        return 'light';
+        return 'light';``
     });
 
     useEffect(() => {

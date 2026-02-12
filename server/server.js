@@ -175,16 +175,11 @@ if (!process.env.ELEVEN_LABS_API_KEY) {
 }
 console.log("Twilio Basic Service initialized");
 // ================= CORS ==================
-// ================= CORS ==================
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://ziyavoice1.netlify.app";
+const FRONTEND_URL = process.env.FRONTEND_URL;
 
 const corsOptions = {
   origin: [
     FRONTEND_URL,
-    "https://ziyavoice1.netlify.app", // Keep old one just in case
-    /\.netlify\.app$/,
-    /\.vercel\.app$/, // Allow Vercel deployments
-    /\.railway\.app$/ // Allow Railway internal calls if needed
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

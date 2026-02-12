@@ -3,7 +3,7 @@
  * Change this URL to update the backend URL everywhere in the application
  */
 export const getApiBaseUrl = () => {
-  return "https://ziyavoice-production-5e44.up.railway.app";
+  return "http://localhost:5000";
 };
 
 export const fetchCampaigns = async (userId: string) => {
