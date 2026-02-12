@@ -21,7 +21,7 @@ class DeepgramBrowserHandler {
         }
     }
 
-    createSession(connectionId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null, agentModel = null) {
+    createSession(connectionId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null, agentModel = null, agentSettings = null) {
         const session = {
             id: connectionId,
             context: [],
@@ -29,6 +29,7 @@ class DeepgramBrowserHandler {
             agentPrompt,
             agentVoiceId: agentVoiceId || "21m00Tcm4TlvDq8ikWAM",
             agentModel: agentModel || "gemini-2.0-flash", // Store agent's selected model
+            agentSettings: agentSettings,
             ws,
             isReady: false,
             isSpeaking: false,
@@ -163,7 +164,7 @@ class DeepgramBrowserHandler {
             const deepgramLanguage = languageMap[agentLanguage] || 'en-US';
             console.log(`🌐 Using language: ${agentLanguage} (Deepgram: ${deepgramLanguage})`);
 
-            session = this.createSession(connectionId, agentPrompt, agentVoiceId, ws, userId, agentId, agentModel);
+            session = this.createSession(connectionId, agentPrompt, agentVoiceId, ws, userId, agentId, agentModel, agent?.settings);
             session.tools = tools; // Store tools in session for later lookup
             session.language = agentLanguage; // Store language in session
 
@@ -393,29 +394,25 @@ class DeepgramBrowserHandler {
                     if (parsed.tool && parsed.data) {
                         console.log(`🛠️ Tool usage detected: ${parsed.tool}`);
 
-                        // Handle Google Sheets Tool
-                        if (parsed.tool.includes('Sheet') || parsed.tool === 'addToSheet' || parsed.tool === 'saveData') {
-                            const googleSheetsService = require('./googleSheetsService.js');
+                        // Handle Tool Execution
+                        if (parsed.tool) {
+                            const ToolExecutionService = require('./toolExecutionService.js');
+                            const toolService = new ToolExecutionService(this.llmService, this.mysqlPool);
 
-                            // Find the tool definition to get the Spreadsheet ID
-                            let spreadsheetId;
-                            if (session.tools && session.tools.length > 0) {
-                                const tool = session.tools.find(t => t.name === parsed.tool);
-                                if (tool) spreadsheetId = googleSheetsService.extractSpreadsheetId(tool.webhookUrl); // In UI, URL is stored in webhookUrl
-                            }
+                            // Find the tool definition
+                            const tool = session.tools && session.tools.find(t => t.name === parsed.tool);
 
-                            if (!spreadsheetId) {
-                                console.error('Spreadsheet URL not found in tool configuration');
-                                // Fallback? Maybe hardcode or error
+                            if (tool) {
+                                await toolService.executeTool(tool, parsed.data, session, session.agentSettings);
+
+                                // Add tool result to context and ask LLM for final response
+                                this.appendToContext(session, JSON.stringify({ tool: parsed.tool, status: "success", message: "Data processing initiated" }), "user");
+
+                                // Recursively call LLM to get the verbal response
+                                return await this.callLLM(session);
                             } else {
-                                await googleSheetsService.appendGenericRow(spreadsheetId, parsed.data);
+                                console.warn(`Tool ${parsed.tool} not found in configuration`);
                             }
-
-                            // Add tool result to context and ask LLM for final response
-                            this.appendToContext(session, JSON.stringify({ tool: parsed.tool, status: "success", message: "Data saved successfully" }), "user"); // mimic user/system confirmation
-
-                            // Recursively call LLM to get the verbal response
-                            return await this.callLLM(session);
                         }
                     }
                 }

@@ -1,5 +1,4 @@
-const { GoogleSheetsService } = require('./googleSheetsService');
-const googleSheetsService = require('./googleSheetsService');
+const WebhookService = require('./webhookService');
 
 /**
  * Tool Execution Service for Voice Calls
@@ -9,6 +8,7 @@ class ToolExecutionService {
     constructor(llmService, mysqlPool) {
         this.llmService = llmService;
         this.mysqlPool = mysqlPool;
+        this.webhookService = new WebhookService(mysqlPool);
     }
 
     /**
@@ -53,64 +53,53 @@ class ToolExecutionService {
      */
     async extractDataFromConversation(conversationHistory, tool) {
         try {
-            // Build extraction prompt
+            // Build schema description from tool parameters
             const parameters = tool.parameters || [];
-            const parameterDescriptions = parameters.map(p =>
-                `- ${p.name} (${p.type})${p.required ? ' [REQUIRED]' : ''}: Extract this value from the conversation`
+            const schemaDescription = parameters.map(p =>
+                `- "${p.name}" (${p.type})${p.required ? ' [REQUIRED]' : ''}: Description or purpose of this field.`
             ).join('\n');
 
-            const conversationText = conversationHistory
-                .map(msg => `${msg.role}: ${msg.text}`)
-                .join('\n');
+            const schemaExample = {};
+            parameters.forEach(p => {
+                schemaExample[p.name] = p.type === 'number' ? 123 : "example_value";
+            });
 
-            const extractionPrompt = `You are a data extraction assistant. Extract the following information from the conversation:
+            const schemaPrompt = `
+Fields to extract:
+${schemaDescription}
 
-${parameterDescriptions}
+Expected JSON Structure:
+${JSON.stringify(schemaExample, null, 2)}
+`;
 
-Conversation:
-${conversationText}
+            console.log(`🔍 Extracting data for tool "${tool.name}" using strict JSON mode...`);
 
-Return ONLY a valid JSON object with the extracted values. Use null for values not found.
-Example format: {"field1": "value1", "field2": "value2"}
+            // Use new extractJson method
+            const extractedData = await this.llmService.extractJson({
+                history: conversationHistory,
+                schema: schemaPrompt,
+                model: 'gemini-2.0-flash'
+            });
 
-JSON:`;
-
-            console.log('🔍 Extracting data with prompt:', extractionPrompt.substring(0, 200) + '...');
-
-            // Use LLM to extract data
-            const response = await this.llmService.chat(
-                'gemini-2.0-flash',
-                extractionPrompt,
-                []
-            );
-
-            // Parse JSON response
-            let extractedData = {};
-            try {
-                // Try to find JSON in the response
-                const jsonMatch = response.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    extractedData = JSON.parse(jsonMatch[0]);
-                } else {
-                    console.warn('No JSON found in LLM response:', response);
-                }
-            } catch (parseError) {
-                console.error('Error parsing LLM response as JSON:', parseError);
-                console.log('Raw response:', response);
+            if (!extractedData) {
+                console.warn('⚠️ LLM returned null for data extraction');
+                return { success: false, data: {}, missingFields: [] };
             }
 
             // Validate required fields
             const missingFields = parameters
-                .filter(p => p.required && !extractedData[p.name])
+                .filter(p => p.required && (extractedData[p.name] === undefined || extractedData[p.name] === null))
                 .map(p => p.name);
 
             if (missingFields.length > 0) {
                 console.warn(`⚠️ Missing required fields: ${missingFields.join(', ')}`);
+                // If strictly required, we might consider this a failure, but often partial data is better than none.
+                // We'll return what we have but flag success based on requirements.
             }
 
             console.log('✅ Extracted data:', extractedData);
             return {
-                success: missingFields.length === 0,
+                success: missingFields.length === 0, // Or true if we accept partials
                 data: extractedData,
                 missingFields
             };
@@ -127,119 +116,71 @@ JSON:`;
 
     /**
      * Execute a tool with collected data
-     * @param {Object} tool - The tool to execute
-     * @param {Object} data - The data to send
+     * @param {Object} params
+     * @param {Object} params.tool - The tool configuration
+     * @param {Object} params.data - The data to send
+     * @param {Object} params.session - The session object containing agentId, callId, etc.
+     * @param {Object} params.agentSettings - The full agent settings (to get global webhook config)
      * @returns {Promise<boolean>} Success status
      */
-    async executeTool(tool, data) {
+    async executeTool(tool, data, session, agentSettings) {
         try {
-            console.log(`🔧 Executing tool: ${tool.name}`);
-            console.log(`   Type: ${tool.type}`);
-            console.log(`   Data keys: ${Object.keys(data).join(', ')}`);
+            console.log(`🔧 Processing data for tool: ${tool.name}`);
 
-            switch (tool.type) {
-                case 'GoogleSheets':
-                    return await this.executeGoogleSheetsTool(tool, data);
+            // Map the old "tool execution" to the new "Structure Extraction -> Webhook" flow
 
-                case 'Webhook':
-                    return await this.executeWebhookTool(tool, data);
+            // 1. Get Webhook Config from Agent Settings (Global)
+            // If the tool has a specific webhook URL, we MIGHT use it, but requirement says "Replace Google Sheets... with Webhook-Based JSON Delivery"
+            // And "Frontend Changes... Add Webhook URL input".
+            // So we prefer the Global Agent Webhook.
 
-                default:
-                    console.warn(`Unsupported tool type: ${tool.type}`);
-                    return false;
+            const webhookConfig = {
+                url: agentSettings?.webhookUrl,
+                secret: agentSettings?.webhookSecret,
+                enabled: agentSettings?.webhookEnabled,
+                retries: agentSettings?.webhookRetryAttempts || 3
+            };
+
+            // 2. Prepare metadata
+            const callMetadata = {
+                duration: session.usage?.twilio || 0, // Minutes
+                cost: 0, // Calculated elsewhere or passed in
+                voice_id: session.agentVoiceId
+            };
+
+            // 3. Delegate to WebhookService
+            const result = await this.webhookService.processExtraction({
+                agentId: session.agentId,
+                callId: session.callId,
+                campaignId: session.campaignId || null,
+                extractedData: data,
+                callMetadata: callMetadata,
+                webhookConfig: webhookConfig
+            });
+
+            if (result.success) {
+                console.log(`✅ Data stored and processed for tool ${tool.name}`);
+                return true;
+            } else {
+                console.error(`❌ Data processing failed for tool ${tool.name}: ${result.error}`);
+                return false;
             }
+
         } catch (error) {
             console.error(`Error executing tool ${tool.name}:`, error);
             return false;
         }
     }
 
-    /**
-     * Execute Google Sheets tool
-     * @param {Object} tool - The tool configuration
-     * @param {Object} data - The data to append
-     * @returns {Promise<boolean>} Success status
-     */
+    // Deprecated methods removed or stubbed
     async executeGoogleSheetsTool(tool, data) {
-        try {
-            if (!tool.webhookUrl) {
-                throw new Error('Google Sheets URL is missing');
-            }
-
-            // Extract spreadsheet ID from URL
-            const spreadsheetId = googleSheetsService.extractSpreadsheetId(tool.webhookUrl);
-            if (!spreadsheetId) {
-                throw new Error('Invalid Google Sheets URL');
-            }
-
-            console.log(`📊 Appending data to Google Sheet: ${spreadsheetId}`);
-
-            // Use the sheet name from tool name or default
-            const sheetName = tool.name || 'Data Collection';
-
-            // Append data to Google Sheets
-            const result = await googleSheetsService.appendGenericRow(
-                spreadsheetId,
-                data,
-                sheetName
-            );
-
-            if (result.success) {
-                console.log('✅ Data successfully saved to Google Sheets');
-                return true;
-            } else {
-                console.error('❌ Failed to save to Google Sheets:', result.error);
-                return false;
-            }
-
-        } catch (error) {
-            console.error('Error executing Google Sheets tool:', error);
-            return false;
-        }
+        console.warn('⚠️ Google Sheets tool is deprecated. Data should be handled via Global Webhook.');
+        return false;
     }
 
-    /**
-     * Execute Webhook tool
-     * @param {Object} tool - The tool configuration
-     * @param {Object} data - The data to send
-     * @returns {Promise<boolean>} Success status
-     */
     async executeWebhookTool(tool, data) {
-        try {
-            if (!tool.webhookUrl) {
-                throw new Error('Webhook URL is missing');
-            }
-
-            const method = tool.method || 'POST';
-            const headers = {
-                'Content-Type': 'application/json',
-                ...(tool.headers || []).reduce((acc, header) => {
-                    acc[header.key] = header.value;
-                    return acc;
-                }, {})
-            };
-
-            console.log(`🌐 Calling webhook: ${tool.webhookUrl}`);
-
-            const fetch = require('node-fetch');
-            const response = await fetch(tool.webhookUrl, {
-                method,
-                headers,
-                body: method === 'POST' ? JSON.stringify(data) : undefined
-            });
-
-            if (response.ok) {
-                console.log('✅ Webhook executed successfully');
-                return true;
-            } else {
-                console.error(`❌ Webhook failed with status: ${response.status}`);
-                return false;
-            }
-
-        } catch (error) {
-            console.error('Error executing webhook tool:', error);
-            return false;
-        }
+        console.warn('⚠️ Legacy Webhook tool execution is deprecated. Data should be handled via Global Webhook.');
+        return false;
     }
 
     /**
@@ -269,7 +210,31 @@ JSON:`;
 
                 if (extraction.success) {
                     // Execute the tool
-                    await this.executeTool(tool, extraction.data);
+                    // Execute the tool
+                    // We need to fetch agent settings to get the webhook config.
+                    // Since we don't have it passed here, we might need to fetch it or rely on session having it.
+                    // The session object in MediaStreamHandler usually has basic agent info, but maybe not all settings.
+                    // However, let's assume session has what we need or we fetch it.
+
+                    // Actually, executeTool now needs session and settings.
+                    // We'll update MediaStreamHandler to pass these.
+
+                    let agentSettings = session.agentSettings;
+                    if (!agentSettings && session.agentId && this.mysqlPool) {
+                        try {
+                            const [rows] = await this.mysqlPool.execute(
+                                'SELECT settings FROM agents WHERE id = ?',
+                                [session.agentId]
+                            );
+                            if (rows.length > 0 && rows[0].settings) {
+                                agentSettings = typeof rows[0].settings === 'string' ? JSON.parse(rows[0].settings) : rows[0].settings;
+                            }
+                        } catch (e) {
+                            console.error('Error fetching agent settings for tool execution:', e);
+                        }
+                    }
+
+                    await this.executeTool(tool, extraction.data, session, agentSettings);
                 } else {
                     console.log(`⏭️ Skipping tool ${tool.name} - missing required data`);
                 }
@@ -307,7 +272,24 @@ JSON:`;
 
                 if (extraction.success) {
                     // Execute the tool
-                    const success = await this.executeTool(tool, extraction.data);
+                    // Fetch settings if needed (same as above)
+                    let agentSettings = session.agentSettings;
+                    if (!agentSettings && session.agentId && this.mysqlPool) {
+                        try {
+                            const [rows] = await this.mysqlPool.execute(
+                                'SELECT settings FROM agents WHERE id = ?',
+                                [session.agentId]
+                            );
+                            if (rows.length > 0 && rows[0].settings) {
+                                agentSettings = typeof rows[0].settings === 'string' ? JSON.parse(rows[0].settings) : rows[0].settings;
+                            }
+                        } catch (e) {
+                            console.error('Error fetching agent settings for tool execution:', e);
+                        }
+                    }
+
+                    // Execute the tool
+                    const success = await this.executeTool(tool, extraction.data, session, agentSettings);
 
                     if (success) {
                         console.log(`✅ Tool ${tool.name} executed successfully after call`);

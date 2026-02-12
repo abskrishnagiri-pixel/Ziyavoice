@@ -28,7 +28,7 @@ class MediaStreamHandler {
         return process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY;
     }
 
-    createSession(callId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null, agentModel = null) {
+    createSession(callId, agentPrompt, agentVoiceId, ws, userId = null, agentId = null, agentModel = null, agentSettings = null) {
         const session = {
             callId,
             context: [],
@@ -36,6 +36,7 @@ class MediaStreamHandler {
             agentPrompt,
             agentVoiceId: agentVoiceId || "21m00Tcm4TlvDq8ikWAM",
             agentModel: agentModel || "gemini-2.0-flash", // Store agent's selected model
+            agentSettings: agentSettings, // Store full settings for tools/webhooks
             ws,
             streamSid: null,
             isReady: false,
@@ -302,7 +303,8 @@ class MediaStreamHandler {
                         console.log(`🌐 Using language: ${agentLanguage} (Deepgram: ${deepgramLanguage})`);
 
                         // Create session with the correct voice ID and model
-                        session = this.createSession(callId, agentPrompt, agentVoiceId, ws, userId, agentId, agentModel);
+                        // Create session with the correct voice ID and model
+                        session = this.createSession(callId, agentPrompt, agentVoiceId, ws, userId, agentId, agentModel, agent?.settings);
                         session.tools = tools; // Store tools in session
                         session.language = agentLanguage; // Store language in session
                         console.log(`✅ Session created with voice ID: ${session.agentVoiceId}, model: ${session.agentModel}`);
@@ -543,8 +545,6 @@ class MediaStreamHandler {
 
                         // Find the tool definition for validation
                         const tool = session.tools?.find(t => t.name === parsed.tool);
-                        const googleSheetsService = require('./googleSheetsService.js');
-
                         if (tool) {
                             // 1. FILTER DATA BY SCHEMA: Only keep what is defined in the tool parameters
                             const filteredData = {};
@@ -564,18 +564,21 @@ class MediaStreamHandler {
                             if (session.dataSaved) {
                                 console.log(`⏭️  Data already saved for this call, skipping duplicate write.`);
                             } else if (Object.keys(filteredData).length > 0) {
-                                let spreadsheetId = googleSheetsService.extractSpreadsheetId(tool.webhookUrl);
 
-                                if (spreadsheetId) {
-                                    // Add Call Metadata for traceability (without transcripts)
-                                    filteredData['CallID'] = session.callId;
+                                // ✅ USE NEW TOOL EXECUTION SERVICE (WEBHOOK BASED)
+                                try {
+                                    const ToolExecutionService = require('./toolExecutionService.js');
+                                    // Instantiate with dependencies
+                                    const toolService = new ToolExecutionService(this.llmService, this.mysqlPool);
 
-                                    await googleSheetsService.appendGenericRow(spreadsheetId, filteredData);
-                                    session.dataSaved = true; // Mark as saved to prevent duplicates
-                                    console.log(`✅ Structured data saved to Google Sheets for CallID: ${session.callId}`);
-                                } else {
-                                    console.error('Spreadsheet URL not found or invalid in tool configuration');
+                                    await toolService.executeTool(tool, filteredData, session, session.agentSettings);
+                                    session.dataSaved = true; // Mark as saved
+                                    console.log(`✅ Structured data processed via WebhookService for CallID: ${session.callId}`);
+
+                                } catch (toolErr) {
+                                    console.error('❌ Failed to execute tool service:', toolErr);
                                 }
+
                             } else {
                                 console.warn('⚠️  LLM returned no data matching the tool schema');
                             }
